@@ -1,0 +1,684 @@
+
+====================nginx  web网站的搭建=====================================
+web服务器: nginx   ------------淘宝改进---->Tengine
+
+apache20000  --------------->并发量
+nginx 50000
+
+tomact  ------------>只能java使用
+#yum -y install gcc pcre-devel openssl-devel        //安装nginx依赖包
+
+netstat命令可以查看系统中启动的端口信息，该命令常用选项如下：  -antup
+-a显示所有端口的信息
+-n以数字格式显示端口号
+-t显示TCP连接的端口
+-u显示UDP连接的端口
+-l显示服务正在监听的端口信息，如httpd启动后，会一直监听80端口
+-p显示监听端口的服务名称是什么（也就是程序名称）
+例子:# netstat  -nultpa  |  grep  nginx   ------------查询nginx的信息
+./configure  --help  |  grep  user--------------忘了怎么办,方法,查询添加的模块
+[root@proxy nginx-1.12.2]# nginx  -s  stop
+[root@proxy nginx-1.12.2]# nginx
+[root@proxy nginx-1.12.2]# nginx  -V
+[root@proxy nginx-1.12.2]# nginx  -s  reload    -------//重新加载配置文件  ,不关服务的情况下
+
+========源码nginx=======合理升级=====================
+到新的安装包,只修改/sbin/nginx,其他不能动
+[root@proxy ~]# tar  -zxvf   nginx-1.12.2.tar.gz
+[root@proxy ~]# cd nginx-1.12.2
+[root@proxy nginx-1.12.2]# ./configure   \
+> --prefix=/usr/local/nginx   \ 
+> --user=nginx   \ 
+> --group=nginx  \ 
+> --with-http_ssl_module
+[root@proxy nginx-1.12.2]# make  ------------------千万不能make install   
+
+修改前先备份原有数据mv
+   
+模块化设计,
+
+make  upgrade    --------------重启(失败率高)
+kill  id        -------------不同1
+kill   name     -------不同2
+
+================nginx====用户认证====不希望所有人都打开,所以设置密码====================
+nginx.conf
+全局设置:用户,日志,进程,并发量
+
+http{
+	server{     ---------表示一个虚拟主机
+		listen  80;
+		server_name  www.example.com;
+		root  html;    ------------------可以写相对路径,绝对路径
+		
+		auth_basic "input password!";    --------------------//认证提示符
+		auth_basic_user_file  "/usr/local/nginx/pass";  -------------//认证密码文件
+	}
+}
+
+# yum -y install  httpd-tools    ----------装生成加密文件的工具
+# htpasswd -c /usr/local/nginx/pass   tom        //创建密码文件    -----  -c   下次不能使用-c,否则会覆盖以前的所有内容
+
+[root@proxy ~]# /usr/local/nginx/sbin/nginx -s reload    //重新加载配置文件    
+#请先确保nginx是启动状态才可以执行命令成功，否则报错,报错信息如下：
+#[error] open() "/usr/local/nginx/logs/nginx.pid" failed (2: No such file or directory)
+
+
+========================虚拟主机=========多个网站===================
+
+
+去掉注释
+前:ctrl +  v
+↓
+↓
+x
+
+
+
+===========================2018.8.21==============================
+对称算法   AES,DES
+非对称  RSA,DSA
+
+[root@proxy ~]# cd /usr/local/nginx/conf
+[root@proxy *]# openssl genrsa > cert.key                            //nginx生成私钥
+[root@proxy *]# openssl req -new -x509 -key cert.key > cert.pem      //生成证书
+修改nginx.conf
+
+====================动态网站环境==========动静分离========================
+http动态网站的环境部署
+nginx  ---------只能处理静态,php处理动态
+mariadb、mariadb-server、mariadb-devel
+php、php-fpm、php-mysql   ----------------除了php-fpm其他都可以yum  
+
+# netstat -utnlp | grep :80 
+启动nginx服务   /usr/local/
+启动MySQL服务   sys
+启动PHP-FPM服务  sys
+防火墙关掉,selinux关掉
+server  {
+ 	listen       80;
+        server_name  localhost;
+
+	#rewrite ^/ http://www.tmooc.cn/;   --------------访问192.168.4.5的请求重定向至www.tmooc.cn
+	#rewrite ^/(.*)$  http://www.tmooc.cn/$1;   -----------访问192.168.4.5/下面子页面，重定向至www.tmooc.cn/下相同的页面
+location / {
+	root  html;
+	index   index.php   index.html
+	#rewrite /a.html  /b.html  redirect;     -------根右边-----地址重写,redirect表示地址栏也发生变化
+}
+
+location  ~ \.php$ {   ---------------nginx支持正则,匹配php结尾的
+ 	root  html;
+  	fastcgi_pass   127.0.0.1:9000;   将匹配的页面转发给本机9000端口,php解释器
+	fastcgi_index  index.php;
+	#fastcgi_param   SCRIPT_FILENAME  $document_root$fastcgi_script_name;   -----------错的
+	include        fastcgi.conf;     --------------其他配置文件
+}
+	#这里，~符号代表正则匹配，*符号代表不区分大小写
+	if ($http_user_agent ~* firefox) {            //识别客户端firefox浏览器
+	rewrite ^(.*)$ /firefox/$1;
+	}
+}
+
+php的配置文件
+listen = 127.0.0.1:9000            //PHP端口号
+pm.max_children = 32                //最大进程数量
+pm.start_servers = 15                //最小进程数量
+pm.min_spare_servers = 5            //最少需要几个空闲着的进程
+pm.max_spare_servers = 32            //最多允许几个进程处于空闲状态
+======================================================
+fastcgi_params  错的,速度变慢
+
+<?php
+$mysqli = new mysqli('localhost','root','','mysql');
+if (mysqli_connect_errno()){
+        die('Unable to connect!'). mysqli_connect_error();
+}
+$sql = "select * from user";
+$result = $mysqli->query($sql);
+while($row = $result->fetch_array()){
+        printf("Host:%s",$row[0]);
+        printf("</br>");
+        printf("Name:%s",$row[1]);
+        printf("</br>");
+}
+?>
+========================2018.8.22===星期三===============
+SEO优化,会跑到百度第一位
+SEM拿钱砸
+
+案例1：Nginx反向代理
+案例2：Nginx的TCP/UDP调度器
+案例3：Nginx常见问题处理
+http{
+	client_header_buffer_size    1k;        //默认请求包头信息的缓存    
+	large_client_header_buffers  4 4k;        //大请求包头部信息的缓存个数与容量
+	
+upstream xyz {               ----------------------集群
+    server 192.168.2.100:80  weight= 1 max_fails=2 fail_timeout=20; ---------------权重
+    server 192.168.2.200:80   ------------------机器彻底坏了写down
+   #weight设置服务器权重值，默认值为1
+	#max_fails设置最大失败次数
+	#fail_timeout设置失败超时时间，单位为秒
+	#down标记服务器已关机，不参与集群调度
+}
+
+server {
+    listen  80;
+    server_name localhost;
+		
+		location / {
+		proxy_pass  http://xyz;--------------添加在root的前面
+		}
+		location ~* \.(jpg|jpeg|gif|png|css|js|ico|xml)$ {
+		expires        30d;           ----------------------------定义客户端缓存时间为30天
+		}
+}
+}
+md5sum  转16进制
+=====================TCP/UDP调度器  ================================
+--with-stream   ------------------tcp和udp的调度模块
+1.9版本以上,才可以支持代理服务器
+
+ssh  -p12345  192.168.4.5  ---------------------p表示端口
+实例:  不在http{}里面
+stream {
+   upstream ssh {    --------------ssh的调度,调用集群
+        server 192.168.2.100:22;
+        server 192.168.2.200:22;
+   }
+   server {
+        listen 12345;
+        proxy_pass  ssh;
+   }
+}
+
+=======================优化Nginx并发量=================================
+当# ab  -c 2000  -n 3000  http://192.168.4.5/    -----------2000人,去点击3000
+访问超过1024服务器崩溃,所以调整优化
+# vim /usr/local/nginx/conf/nginx.conf--------------在配置文件里修改
+--------->worker_processes  2(内核数),worker_connections 65535(进程数)----------保存
+还是不行,需要修改系统的上限
+[root@proxy ~]# ulimit -a                        //查看所有属性值
+[root@proxy ~]# ulimit -Hn 100000                //设置硬限制（临时规则）(改不了)
+[root@proxy ~]# ulimit -Sn 100000                //设置软限制（临时规则）
+
+client_header_buffer_size    1k;        //默认请求包头信息的缓存    
+large_client_header_buffers  4 4k;        //大请求包头部信息的缓存个数与容量
+
+location ~* \.(jpg|jpeg|gif|png|css|js|ico|xml)$ {
+expires        30d;            ---------------------------在server里面,不在location-----定义客户端缓存时间为30天
+}
+
+===============对页面进行压缩处理====================================
+http {
+.. ..
+gzip on;                            //开启压缩
+gzip_min_length 1000;                //小文件不压缩
+gzip_comp_level 4;                //压缩比率   9最好但最慢
+gzip_types text/plain text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript;
+                                    //对特定文件压缩，类型参考mime.types,在/usr/local/nginx/conf/里面
+...
+}
+
+音乐  APM 50M   --->  mp3  5M  
+============web服务器内存缓存==================
+http { 
+open_file_cache          max=2000  inactive=20s;
+        open_file_cache_valid    60s;
+        open_file_cache_min_uses 5;
+        open_file_cache_errors   off;   ----------缓存出错不要报错
+//设置服务器最大缓存2000个文件句柄，关闭20秒内无请求的文件句柄
+//文件句柄的有效时间是60秒，60秒后过期
+//只有访问次数超过5次会被缓存
+} 
+
+系统优化
+
+====1=======2018.8.23====星期四========emmcached数据库================
+
+key-value  内存数据库    断电就丢失数据
+1. memcached配置文件
+# vim /usr/lib/systemd/system/memcached.service   -------------打开系统启动配置文件
+ExecStart=/usr/bin/memcached -u $USER -p $PORT -m $CACHESIZE -c $MAXCONN $OPTIONS
+在system下的server结尾的才可以sys启动
+2. # vim /etc/sysconfig/memcached   -------------memcached软件的基本配置
+PORT="11211"
+USER="memcached"
+MAXCONN="1024"
+CACHESIZE="64"                  -----------------在内存给64M
+OPTIONS=""
+
+====2===============连接memcached=====测试能用不=======================
+使用telnet连接服务器测试memcached服务器功能，包括增、删、改、查等操作。
+##提示：0表示不压缩，180为数据缓存时间，3为需要存储的数据字节数量。
+set name 0 180 3                //定义变量，变量名称为name
+plj                       //输入变量的值，值为plj   
+add myname 0 180 10            //新建，myname不存在则添加，存在则报错
+set myname 0 180 10            //添加或替换变量
+replace myname 0 180 10           //替换，如果myname不存在则报错
+get myname                    //读取变量
+append myname 0 180 10        //向变量中追加数据
+delete myname           //删除变量
+stats            //查看状态
+flush_all           //清空所有
+quit        //退出登录
+
+=====3===============LNMP+memcached================php连接数据库=========================
+ 为了php连接数据库,需要一个模块 安装php-pecl-memcached
+
+# [ -z $var2 ] && echo "空值" || echo "非空值"
+
+#vim /usr/local/nginx/html/test1.php
+<?php    --------------------------连接到memcached,进行数据增,删,改,查
+$memcache=new Memcache;
+$memcache->connect('localhost',11211)or die('could not connect!!');
+$memcache->set('key','test');
+$get_values=$memcache->get('key');
+echo $get_values;
+?>
+换一种方式验证
+telnet  192.168.4.5 11211  --------------古董连接memcached
+进行查询是否有key关键字的值   
+get key
+VALUE key 0 4
+test     -----------查询到的与web访问的一致http://192.168.4.5/test1.php
+END
+
+
+crtl+v  下键  I  输入#  按Esc    ----------------批量加注释
+
+=====4=========session===cookie=====================================
+client   ------------------>  web
+cookie=sid                        session会话信息
+
+
+
+
+
+===========2018.8.24======练习===================================
+1.网卡添加
+nmcli connection  add type  ethernet  con-name eth3  ifname eth3   
+2.nginx安装http_stub_status_module------------------------查看Nginx的一些状态信息
+--with-http_stub_status_module
+3. 查看nginx版本
+curl -I 201.1.2.100
+4.同步rsync  -avz   --deletd  ...
+5.隐藏nginx版本
+server_tokens off;
+6.修改硬连接数
+vim /etc/security/limits.conf
+7.
+watch -n 1 ss -s
+-n：指定指令执行的间隔时间（秒）；
+-d：高亮显示指令输出信息不同之处；
+-t：不显示标题。
+平僧在世百年,救人无数,但有三种人不救.
+哪几种?
+第一,为祸人间者不救
+第二,忘恩负义者不救
+那第三种呢?
+SB不救.
+
+=======1=====2018.8.25====tomcat===java安装==============================
+1.安装jdk
+[root@web1 ~]# yum –y install  java-1.8.0-openjdk                //安装JDK
+[root@web1 ~]# yum -y install java-1.8.0-openjdk-headless        //安装JDK
+[root@web1 ~]# java -version                                    //查看JAVA版本
+
+安装后好,解压
+[root@web1 ~]# tar -xf  apache-tomcat-8.0.30.tar.gz
+[root@web1 ~]# mv apache-tomcat-8.0.30  /usr/local/tomcat    -------移动到,安装ok
+
+启动  /usr/local/tomcat/bin/starup.sh    -------------不要相信,防火墙trusts,selinux为0
+
+查看三个端口才算;8080  8009 8005(重要,启动会慢)
+因为读取/dev/radnom的时候,效率太低,解决方案:  
+mv  /dev/random  /dev/random.bak   -------------------备份
+ln -s  /dev/urandom   /dev/random 
+可以
+
+=======2========创建网站===========================
+修改#vim /usr/local/tomcat/conf/server.xml
+<Host name="www.a.com" appBase="a"></Host> ------------------a表示在tomcat下创建a/ROOT文件夹
+访问www.a.com:8080就可以了
+如何去掉默认的ROOT路径呢?  -------------添加一行<Context path="" docBase="aa" reloadable="true"/>
+
+<Context path="/test" docBase="/var/www/html/" reloadable="true"/>     ---------修改路径
+<Context path="" docBase="aa" reloadable="true"/>	-----------------修改默认路径
+=======3=========加密网站====配置Tomcat支持SSL加密网站==========
+# keytool -genkeypair -alias tomcat -keyalg RSA -keystore /usr/local/tomcat/keystore   ----------提示输入密码为:123456
+//-genkeypair     生成密钥对
+//-alias tomcat     密钥别名
+//-keyalg RSA     定义密钥算法为RSA算法
+//-keystore         定义密钥文件存储在:/usr/local/tomcat/keystore
+# vim /usr/local/tomcat/conf/server.xml   --------------------修改配置文件
+… …
+<Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol"
+maxThreads="150" SSLEnabled="true" scheme="https" secure="true"
+keystoreFile="/usr/local/tomcat/keystore" keystorePass="123456"   ----------添加的一行
+clientAuth="false" sslProtocol="TLS" />
+
+//备注，默认这段Connector被注释掉了，打开注释，添加密钥信息即可
+配置Tomcat日志  -----------复制value
+
+
+=======4===========使用Varnish加速Web==============================
+
+[root@proxy ~]# yum -y install gcc readline-devel    //安装软件依赖包
+[root@proxy ~]# yum -y install ncurses-devel         //安装软件依赖包
+[root@proxy ~]# yum -y install pcre-devel            //安装软件依赖包
+[root@proxy ~]# yum -y install python-docutils-0.11-0.2.20130715svn7687.el7.noarch.rpm         //安装软件依赖包
+ [root@proxy ~]# useradd -s /sbin/nologin varnish                //创建账户
+[root@proxy ~]# tar -xf varnish-5.2.1.tar.gz
+[root@proxy ~]# cd varnish-5.2.1
+[root@proxy varnish-5.2.1]# ./configure
+[root@proxy varnish-5.2.1]# make && make install
+
+[root@proxy varnish-5.2.1]# cp  etc/example.vcl   /usr/local/etc/default.vcl  -------------复制启动脚本及配置文件
+
+[root@proxy ~]# vim  /usr/local/etc/default.vcl  ---------------修改代理配置文件
+backend default {
+     .host = "192.168.2.100";
+     .port = "80";
+ }
+
+[root@proxy ~]# varnishd  -f /usr/local/etc/default.vcl   ---------------------启动服务
+//varnishd命令的其他选项说明如下：
+//varnishd –s malloc,128M        定义varnish使用内存作为缓存，空间为128M
+//varnishd –s file,/var/lib/varnish_storage.bin,1G 定义varnish使用文件作为缓存 
+
+
+[root@proxy ~]# varnishlog                        //查看varnish日志
+[root@proxy ~]# varnishncsa                    //查看访问日志
+
+更新缓存数据，在后台web服务器更新页面内容后，用户访问代理服务器看到的还是之
+前的数据，说明缓存中的数据过期了需要更新（默认也会自动更新，但非实时更新）。
+[root@proxy ~]# varnishadm  
+varnish> ban req.url ~ .*
+//清空缓存数据，支持正则表达式
+
+
+
+=========2018.8.27=====星期一=======Subversion============================
+
+    创建版本库
+    导入初始化数据
+    检出数据至用户本地副本
+    对本地副本进行增删改查等操作
+
+安装  yum  -y   install   subversion
+创建一个目录在/var下
+mkdir   /var/svn/
+
+利用特殊命令创建专属目录
+svnadmin   create   /var/svn/project
+#ls  /var/svn/project
+本地导入初始化数据
+    [root@web1 ~]# cd /usr/lib/systemd/system/ 
+    [root@web1 ~]# svn import . file:///var/svn/project/ -m "Init Data"    -----------
+--------将system内地所有数据上传/var/svn/project/内(数据库的形式存储)
+
+上传到svn后,进行多人的权限设置,需要修改配置文件
+#ls  /var/svn/project/conf
+	authz  passwd  svnserve.conf    --------------从右向左改
+
+在svnserver.conf下改,-------------------
+	anon-access = none   //19行，匿名无任何权限
+	
+	auth-access = write  //20行，有效账户可写
+	
+	password-db = passwd   //27行，密码文件
+	
+	authz-db = authz    //34行，ACL访问控制列表文件
+
+在passwd下修改---------------------------
+	[users]
+	harry = 123456 	//用户名和密码
+	
+	tom = 123456	//用户名和密码
+	
+在author   ------------------
+	[/]                                //定义ACL访问控制
+	harry = rw                        //用户对项目根路径可读可写
+	tom = rw
+
+启动服务,
+svnserver  -d  -r   /var/svn/project     ------------------  "-d"  表示后台
+
+在web2客户端进行下载和修改 
+#cd   tmp
+#svn co   --username  harry   --password  123456  svn://192.168.2.100 code   -----------将服务器的内容下载到tmp的/code下
+改完后上传
+#svn  ci  -m  "修改了啥说明"
+跟新最新资料   
+svn  update
+# svn info     svn://192.168.2.100    //查看版本仓库基本信息
+# svn log     svn://192.168.2.100     //查看版本仓库的日志
+那如何添加新文件?
+#svn add  test.sh
+#svn  ci  -m   "new file"
+删除:
+svn  rm   test.sh
+删除文件内容咋办,单个文件
+#sed  -i  'd' tmp.mount
+# svn revert  tmp.mount
+
+[root@web2 code]# sed -i '1a #test###' tuned.service
+//修改本地副本中的代码文件
+[root@web2 code]# svn ci  -m  "xxx"
+//提交代码
+[root@web2 code]# svn merge -r7:2    tuned.service    
+//将文件从版本7还原到版本2
+
+===========================
+当修改同一个文件时,会有错误提示,需要svn update然后上传
+修改同一行时,需要线下手动将四个文件删掉三个
+[root@web2 code]# ls   tun*
+tuned.service  tuned.service.mine  tuned.service.r10  tuned.service.r12
+只留tuned.service
+然后上传
+=======2==============git==========================
+www.github.com
+
+=======3============rpm制作====================
+[root@web1 ~]# yum -y install  rpm-build
+[root@web1 ~]# rpmbuild -ba nginx.spec                //会报错，没有文件或目录
+[root@web1 ~]# ls /root/rpmbuild                    //自动生成的目录结构
+BUILD  BUILDROOT  RPMS  SOURCES  SPECS  SRPMS
+[root@web1 ~]# cp nginx-1.12.2.tar.gz /root/rpmbuild/SOURCES/  ----------准备工作，将源码软件复制到SOURCES目录
+创建并修改SPEC配置文件
+    [root@web1 ~]# vim /root/rpmbuild/SPECS/nginx.spec 
+    Name:nginx        
+    Version:1.12.2
+    Release:    10
+    Summary: Nginx is a web server software.    
+    License:GPL    
+    URL:    www.test.com    
+    Source0:nginx-1.12.2.tar.gz
+    #BuildRequires:    
+    #Requires:    
+    %description
+    nginx [engine x] is an HTTP and reverse proxy server.
+    %prep
+    %setup –q                            //自动解压源码包，并cd进入目录
+    %build
+    ./configure
+    make %{?_smp_mflags}
+    %install
+    make install DESTDIR=%{buildroot}
+    cp /root/rpmbuild/SPECS/nginx.sh %{buildroot}/usr/local/nginx/    
+    ##注意，cp非必须操作，注意，这里是将一个脚本拷贝到安装目录，必须提前准备该文件
+    %files
+    %doc
+    /usr/local/nginx/*            //对哪些文件与目录打包
+    %changelog
+=========2018.8.28=========GRE  vpn==================================================
+linux之间的实验,不需要安装包.
+oot@client ~]# lsmod  | grep ip_gre            //确定是否加载了gre模块
+#lsmode
+# modprobe  ip_gre           --------------加载模块ip_gre
+#lsmode  | grep  ip_gre     ---------------查看
+
+modinfo  ip_gre    -------------查看详细信息
+1. 创建vpn隧道
+# ip tunnel  add  tun0   mode  gre  remote   201.1.2.5  local  201.1.2.10
+
+//ip tunnel add创建隧道（隧道名称为tun0），ip tunnel help可以查看帮助
+//mode设置隧道使用gre模式
+//local后面跟本机的IP地址，remote后面是与其他主机建立隧道的对方IP地址
+然后给隧道网卡设置ip
+client#ip addr add  10.10.10.10/24  peer 10.10.10.10/24
+oot@proxy ~]# echo "1" > /proc/sys/net/ipv4/ip_forward  --------------路由转发
+
+===2========windows  和   linux之间的vpn===============================
+
+windows  201.1.2.20
+linux    201.1.2.5
+
+# yum localinstall pptpd-1.4.0-2.el7.x86_64.rpm   ---------------在linux下安装软件
+rpm  -qc   pptpd   -------------查看有哪些配置文件
+
+修改文件
+[root@proxy ~]# vim /etc/pptpd.conf
+.. ..
+localip 201.1.2.5                                    //服务器本地IP
+remoteip 192.168.3.1-50                            //分配给客户端的IP池
+
+
+[root@proxy ~]# vim /etc/ppp/options.pptpd
+require-mppe-128                                    //使用MPPE加密数据
+ms-dns 8.8.8.8                                    //DNS服务器
+
+[root@proxy ~]# vim /etc/ppp/chap-secrets            //修改账户配置文件
+jacob      *        123456      *或者ip
+//用户名    服务器标记    密码          客户端
+
+[root@proxy ~]# iptables -t nat -A POSTROUTING -s 192.168.3.0/24 \
+>  -j SNAT --to-source 201.1.2.5  ------------------翻墙设置（非必需操作）
+
+
+然后在windows新建vpn连接
+=======3==========L2TP+IPSec VPN===================================
+服务器
+=======步骤一：部署IPSec服务
+# yum -y install libreswan
+
+----------1-------新建IPSec密钥验证配置文件
+
+# vim /etc/ipsec.d/myipsec.conf            
+//新建该文件，参考lnmp_soft/vpn/myipsec.conf    
+conn IDC-PSK-NAT
+    rightsubnet=vhost:%priv                        //允许建立的VPN虚拟网络
+    also=IDC-PSK-noNAT
+conn IDC-PSK-noNAT
+    authby=secret                                    //加密认证
+        ike=3des-sha1;modp1024                        //算法
+        phase2alg=aes256-sha1;modp2048                //算法
+    pfs=no
+    auto=add
+    keyingtries=3
+    rekey=no
+    ikelifetime=8h
+    keylife=3h
+    type=transport
+    left=201.1.2.200                                //重要，服务器本机的外网IP
+    leftprotoport=17/1701
+    right=%any                                    //允许任何客户端连接
+    rightprotoport=17/%any
+
+---------2----------------------创建IPSec预定义共享密钥
+
+# vim /etc/ipsec.d/mypass.secrets        //新建该文件
+201.1.2.200   %any:    PSK    "randpass"             //randpass为密钥
+                                                //201.1.2.200是VPN服务器的IP
+
+----------3-----------------------启动IPSec服务
+
+#systemctl start ipsec
+#netstat -ntulp |grep pluto
+
+===========步骤二：部署XL2TP服务
+安装软件包
+# yum localinstall xl2tpd-1.3.8-2.el7.x86_64.rpm
+修改xl2tp配置文件（修改3个配置文件的内容）
+[root@client ~]#  vim  /etc/xl2tpd/xl2tpd.conf                //修改主配置文件
+[global]
+.. ..    
+[lns default]
+.. ..
+ip range = 192.168.3.128-192.168.3.254                    //分配给客户端的IP池
+local ip = 201.1.2.200                                //VPN服务器的IP地址
+[root@client ~]# vim /etc/ppp/options.xl2tpd                //认证配置
+require-mschap-v2                                         //添加一行，强制要求认证
+#crtscts                                                //注释或删除该行
+#lock                                                //注释或删除该行
+root@client ~]# vim /etc/ppp/chap-secrets                    //修改密码文件
+jacob   *       123456  *                //账户名称   服务器标记   密码   客户端IP
+
+# systemctl start xl2tpd   --------------重启
+# iptables -t nat -A POSTROUTING -s 192.168.3.0/24 \
+>  -j SNAT --to-source 201.1.2.200		-------------------------翻墙设置
+=====4==================pssh远程套件工具==========================
+cal   1756
+凯撒年历
+
+1752年,少了十几天
+
+安装软件包
+[root@proxy ~]# rpm -ivh  pssh-2.3.1-5.el7.noarch.rpm
+修改/etc/hosts本地解析文件
+	cat /etc/hosts
+	… …
+	192.168.2.100  host1
+	192.168.2.200  host2
+	192.168.4.100  host3
+创建主机列表文件
+	[root@proxy ~]# cat /root/host.txt            //每行一个用户名、IP或域名
+	… …
+	root@host1
+	host2
+	host3
+	… …
+连接
+[root@proxy ~]# man pssh                    //通过man帮助查看工具选项的作用
+
+-A                使用密码远程其他主机（默认使用密钥）
+-i                将输出显示在屏幕
+-H                设置需要连接的主机
+-h                设置主机列表文件
+-p                设置并发数量
+-t                设置超时时间
+-o dir            设置标准输出信息保存的目录
+-e dir            设置错误输出信息保存的目录
+-x                传递参数给ssh
+
+使用pssh
+
+[root@proxy ~]# pssh -i  -A -H  'host1 host2 host3'   \
+>  -x '-o StrictHostKeyChecking=no'   echo hello
+
+生成密钥并发送密钥到其他主机
+# ssh-keygen -N  ''   -f /root/.ssh/id_rsa     //非交互生成密钥文件
+# ssh-copy-id  host1
+=============================================
+# pscp.pssh -h host.txt  /etc/hosts  / tmp   把/etc/passwd  传送给  远程的  /opt下
+
+#pslurp  -h host.txt  /etc/passwd  /pass     下载多台远程的文件(当前路径)
+
+# pslurp -h host.txt -L  /media   /etc/passwd   /pass    --------------给定路径
+
+# pnuke  -h host.txt  sleep  ---------------杀远程进程(模糊匹配)
+ 
+
+
+
+
+
+
+
+
+
+
+
+
