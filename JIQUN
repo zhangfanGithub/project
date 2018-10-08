@@ -1,0 +1,183 @@
+存储技术与应用 iSCSI技术应用
+udev配置 NFS网络文件系统
+Multipath多路径
+NFS网络文件系统
+udev配置
+
+======10.8=========存储技术与应用(前端+后端)==================早上============
+集群与操作  5天
+
+LB集群
+HA集群
+
+存储  
+iscsi  共享存储
+ceph  分布式存储  
+
+存储技术分类
+scsi小型计算机系统接口
+DAS直连式存储
+NAS网络技术存储
+SAN存储区域网络  :数据包装在ip包里,所以不受距离限制;双绞线的链接ip-san;光纤的链接fc-san
+FC光纤通道 
+
+
+hba光纤模块,硬件
+san技术: 
+	 点到点: point-to-point 
+	已裁定的环路: 可多达126个设备共享一段信道
+	交换式拓扑 : 所有设备通过光纤交换机互联
+---------------------早上-------------搭建iscsi-------
+案例1. 配置iscsi服务
+需要一台iscsi服务器51,单独配置一块硬盘5G,共享给客户端50.
+	客户端: iscsi initiator :软件实现,成本低,性能较低
+	iscsi HBA : 硬件实现,性能好成本较高
+	存储设备端  iscsi Target
+	以太网交换机
+systemctl status  NetworkManager  查看网络模块
+停掉
+在50启动httpd,并测试网页到ok
+配置iscsi
+.xml  扩展标记语言
+[root@mysql51 ~]# cat  /etc/target/saveconfig.json    -----------查看配置的文件
+{
+  "fabric_modules": [], 
+  "storage_objects": [], 
+  "targets": []
+}
+后端51: 
+安装targetcli,进入---->  targetcli
+
+/> ls
+	/> backstores/block  create  diskb /dev/vdb
+	/> iscsi/ create  iqn.2018-10.cn.tedu.storage51:vdb
+	/> iscsi/iqn.2018-10.cn.tedu.storage51:vdb/tpg1/acls  create   iqn.2018-10.cn.tedu:client50
+	/> iscsi/iqn.2018-10.cn.tedu.storage51:vdb/tpg1/luns create /backstores/block/diskb
+	定义客户端访问ip,  ------------可以不定义(默认所有)
+前端50:
+装包
+	# yum -y install iscsi-initiator-utils
+	 systemctl restrt iscsi
+修改配置文件
+	[root@client ~]# vim /etc/iscsi/initiatorname.iscsi 
+	InitiatorName=iqn.2018-01.cn.tedu:client1
+	注意：必须跟服务器上配置的ACL一致！
+发现设备
+	参考man iscsiadm！
+	iscsiadm --mode discoverydb --type sendtargets --portal 192.168.4.51 --discover
+登入设备
+ 	iscsiadm --mode node --targetname iqn.2018-10.cn.tedu.storage51:vdb --portal 192.168.4.51:3260 --login
+登出
+	...............--logout(登出时,先卸载,)
+
+
+
+------------下午-----------udev---修改设备定义名------------------
+由于挂载分区的名称会发生变化,例:sda  --->  sdb
+IDE  hd开头   
+udev :
+	处理设备命名
+	决定要创建哪些设备文件或链接
+	决定如何设置属性
+	决定触发哪些事件
+如何获取已经拥有的设备名
+udevamin  monitor  --help
+udevamin  monitor  --property   ---------------插入u盘,显示u盘的信息
+
+# udevadm  info  -q  path   -n  /dev/sdb    -------------获取路径
+/devices/platform/host3/session2/target3:0:0/3:0:0:0/block/sdb   ----------获取到的路径(不一样)
+取得路径后
+udevadm  info  -q  all -p [上面的路径] -a    ---------------获取一堆信息
+
+SUBSYSTEM=="block",  (设备类型(块))
+ATTR{size}=="10485760",  (大小)
+ATTRS{model}=="diskb           ",   (型号)
+ATTRS{vendor}=="LIO-ORG ",  (厂商)
+
+那如何编写定义呢?
+vim  /etc/udev/rules.d/[1-99]数字-描述信息.rules   ----------->定义规则
+写入:
+SUBSYSTEM=="block",ATTR{size}=="10485760",ATTRS{model}=="diskb           ",ATTRS{vendor}=="LIO-ORG ",SYMLINK+="iscsi/vdb"
+登出,登入,
+查看  /dev/iscsi/vdb
+
+# ls -l  /dev/iscsi/vdb 
+lrwxrwxrwx. 1 root root 6 10月  8 16:46 /dev/iscsi/vdb -> ../sdc    -------->是sdc设备的别名
+
+# mount  /dev/iscsi/vdb   /var/www/html/    --------------再次挂载,出现错误
+mount: /dev/sdc 写保护，将以只读方式挂载
+mount: 未知的文件系统类型“(null)”
+原因:  udev对设备进行了修改,让系统不在识别,需要删除分区,重新分区和格式化
+
+
+常见指令 
+!=  不匹配
+=   指定赋予的值
++=  添加新值
+:=   指定值,且不允许被替换
+NAME="udisk"    定义设备名称
+SYMLINK+="data1"  定义设备 别名
+OWNER="student"   定义设备的所有者
+MODE="0600"    定义设备的权限
+ACTION=="add"   判断设备的操作动作
+KERNEL=="sd[a-z]1"  判断设备的内核名称
+RUN+=程序   为设备添加程序
+-------------多路径------------------------
+利用两个ip进行登入,会有两个设备名(其实同一个)
+为了解决
+# yum install -y device-mapper-multipath     
+利用2.51发现
+使用2.51登入   
+mpathconf   --user_friendly_names n    ------------生成配置文件
+获取wwid
+	[root@mysql50 /]# find  /  -name "scsi_id"     ------------
+	/usr/lib/udev/scsi_id
+	[root@mysql50 /]# /usr/lib/udev/scsi_id   --whitelisted  /dev/
+	[root@mysql50 /]# lsblk
+	NAME          MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+	sdc             8:32   0    5G  0 disk 
+	sdd             8:48   0    5G  0 disk 
+	sr0            11:0    1 1024M  0 rom  
+	vda           252:0    0   20G  0 disk 
+	├─vda1        252:1    0    1G  0 part /boot
+	└─vda2        252:2    0   19G  0 part 
+	  ├─rhel-root 253:0    0   17G  0 lvm  /
+	  └─rhel-swap 253:1    0    2G  0 lvm  [SWAP]
+	vdb           252:16   0    2G  0 disk 
+	[root@mysql50 /]# /usr/lib/udev/scsi_id   --whitelisted   /dev/sdc
+	36001405197a21aaadef4d4196efe5a65
+	[root@mysql50 /]# /usr/lib/udev/scsi_id   --whitelisted   /dev/sdd
+	36001405197a21aaadef4d4196efe5a65
+修改配置文件
+[root@web1 ~]# vim /etc/multipath.conf
+defaults {
+        user_friendly_names yes
+find_multipaths yes
+}
+
+multipaths {
+    multipath {
+        wwid    "36001405197a21aaadef4d4196efe5a65"
+        alias   mpatha
+    }
+}
+[root@web1 ~]# systemctl start multipathd
+[root@web1 ~]# systemctl enable multipathd
+
+# partprobe ; multipath -rr   ------重载
+
+multipath -ll    -----------查看状态
+
+------------------添加网卡-----
+cd  /etc/sysconfig/network-scripts
+cp ifcfg-eth0
+	TYPE=Ethernet
+	BOOTPROTO=none
+	NAME=et1
+	DEVICE=eth1
+	ONBOOT=yes
+	IPADDR=192.168.2.50
+systemctl restart  network        ----------------重启网卡
+
+
+
