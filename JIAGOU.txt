@@ -1,0 +1,1618 @@
+===========周二=====ansible======10.22=========批量搞机==
+git
+python,shell
+jenkins
+ansible
+-----------ansible--------
+ansible优点
+只需要SSH和Python即可使用
+无客户端
+ansible功能强大,模块丰富
+上手容易,门槛低
+基亍Python开发,做二次开发更容易
+使用公司比较多,社区活跃
+
+环境:--------------------------- yum源  hosts 
+ python源码安装
+	yum install   python-tools    
+	python   **.py   build
+	python    **.py   install
+配置文件: 
+5台机器
+	192.168.1.10   ansible	
+	192.168.1.11	   web1
+	192.168.1.12   web2
+	192.168.1.21   db1
+	192.168.1.22   db2
+	192.168.1.33   cache
+	
+	---------------------------
+修改配置文件   /etc/ansible/ansible.cfg
+14行   打开  
+[ansible#]	ansible  cache  -m ping  -k
+	
+	在/etc/ansible/host
+	[web]
+		web1
+		web2
+	[db]
+		db[1:2] ansible_ssh_port=222    //特需改加222,1到2
+	[other]
+		192.168.1.16
+	[app:children]     //子组
+	web
+	db
+	[app:vars]
+	ansible_ssh_user=root
+	ansible_ssh_pass=a
+	
+	ssh链接  yes    打开61行的yes
+[root@ansible ansible]# ansible  web1  -m ping  -k    //不加-k  则不要密码
+		SSH password: 
+		web1 | SUCCESS => {
+			"changed": false, 
+			"ping": "pong"
+		}
+
+-------------------------自定义配置
+
+cd  /var/
+mkdir   myansible
+# grep -v   '^#'  /etc/ansible/ansible.cfg  | grep  -v  '^$'  
+
+vim   ansible.cfg		//修改配置文件
+	[defaults]
+	inventory      = /var/myansible/xxoo
+	host_key_checking = False
+vim    xxoo
+	[app1]
+	web1
+	db1
+
+	[app2]
+	web2
+	db2
+	cache
+
+	[app2:vars]
+	ansible_ssh_user=root
+	ansible_ssh_pass=1
+
+	
+# ansible all  -m ping		//测试所有主机
+
+[root@ansible ansible]# ansible web   -m command   -a  "uptime"		//查看主机的负载均衡
+	web2 | SUCCESS | rc=0 >>
+	 15:16:25 up  3:27,  3 users,  load average: 0.00, 0.01, 0.02
+	web1 | SUCCESS | rc=0 >>
+	 15:16:25 up  3:27,  3 users,  load average: 0.00, 0.01, 0.01
+
+	
+[root@ansible ansible]# ansible all -m command  -a "rm -f  /root/.ssh/authorized_keys"   //删除远程所有主机公钥
+	
+给所有主机部署密钥
+	# ssh-keygen -t rsa -b 2048 -N ''
+[root@ansible .ssh]# ansible all -m authorized_key -a "user=root exclusive=true  \
+manage_dir=true key='$(< /root/.ssh/id_rsa.pub)'" -k			//给所有主机设置秘钥
+SSH password:
+
+ansible-doc  -l   //列出模块的名字
+ansible-doc   模块名
+
+shell 模块
+[root@ansible .ssh]# ansible web1 -m shell -a 'chdir=/tmp touch f2'
+	
+-----------script 模块										------------------写脚本
+对于太复杂的命令,可以写个脚本,然后用 script 模块执行
+在 web1 主机上创建 zhangsan3 用户,修改 zhangsan3 的密码为 123456,设置
+zhangsan3 第一次登陆必须修改密码
+用命令写:
+	#!/bin/bash
+	useradd zhangsan3
+	echo 123456 | passwd --stdin zhangsan3
+	chage -d 0 zhangsan3
+	echo
+	
+----------------------//批量修改文件(copy模块)
+#ansible  all -m copy  -a "src=/etc/resolv.conf dest=/etc/resolv.conf"
+
+	dest:必选项。进程主机的绝对路径,如果源文件是一个目彔,那么该路径也必须是个
+	目彔
+	backup:在覆盖乊前将原文件备份,备份文件包含时间信息。有两个选项:yes|no
+	force:如果目标主机包含该文件,但内容丌同,如果设置为 yes,则强制覆盖,如果为no,则只有当目标主机的目标位置丌存在该文件时,才复制。默认为 yes
+//使用 lineinfile 模块编辑文件(整行被替换掉)
+ansible cache -m lineinfile -a 'path=/etc/sysconfig/network-scripts/ifcfg-eth0 regexp="^ONBOOT=" line="ONBOOT=\"no\""'
+	ansible cache -m lineinfile -a 'path=/etc/sysconfig/network-scripts/ifcfg-eth0 regexp="^(ONBOOT=)" line="\1\"no\""'
+	 
+-------------------replace------------
+修改文件的某一部分(替换一行中匹配的内容),以正则表达式匹配为基础修改
+	
+	# ansible cache -m replace  -a  'path=/etc/sysconfig/network-scripts/ifcfg-eth0 regexp="^(ONBOOT=).*" replace="\1\"no\""		//替换选中的一部分
+	
+----------------------yum
+# ansible cache -m yum  -a 'state='installed'  name="lftp"'
+#ansible  cache  -m  service  -a  'name="sshd"  enabled="yes"  state="started"' //sshd 服务名,开机吭动同时吭动这个服务
+
+ansible  cache  -m  setup	//查看所有信息
+-------------------------------------------------------------------	
+本案例要求:
+
+安装 Apache 并修改监听端口为 8080
+修改 ServerName 配置,执行 apachectl -t 命令不报错
+设置默认主页 hello world
+启动服务并设开机自启
+	
+1. # ansible cache  -m replace -a 'path=/etc/httpd/conf/httpd.conf regexp="^(Listen).*"  replace="\1 8080"'
+		cache | SUCCESS => {
+    "changed": true, 
+    "msg": "1 replacements made"
+    
+2. # ansible cache -m replace -a 'path=/etc/httpd/conf/httpd.conf regexp="#(ServerName).*" replace="\1 0.0.0.0"'
+    
+3.[root@ansible myansible]# echo "hello world" >  index.html
+[root@ansible myansible]# ansible cache -m  copy  -a 'src=index.html  dest="/var/www/html/"'
+
+	
+4.# ansible cache -m service  -a 'state="started"  name="httpd" enabled="yes"'
+	
+	
+	
+-----------------------------------------------
+========第三天=====playbook===========ansible=======
+	
+	
+ansible   七种武器
+
+	ansible 命令
+
+	ansible-doc  文档说明
+
+
+	ansible-console  提供的交互式工具
+
+	ansible-galaxy   上传github 管理roles的一款工具,与python
+
+	ansible-playbook  任务集
+
+	ansible-vault  配置文件加密
+
+	ansible-pull / push  
+--------JSON--------------
+数组
+array [a,b,c,d,e]
+键值对
+key:value
+互相套:
+
+'  ()  []  {}  :  ,
+JSON纯文本
+
+yaml: 一个可读性高,用杢表达数据序列的格式
+	数组使用  "- " 来表示
+	键值对使用": "来表示
+
+vim  ping.pym
+---
+- hosts: all			
+  remote_user: root
+  tasks:
+    - ping:
+     -  shell: uptime
+
+ansible-playbook  ping.pym
+
+
+:前面模块名
+:后面 模块参数
+---------------------------
+playbook构成
+– Target: 定义将要执行playbook的进程主机组
+– Variable: 定义playbook运行时需要使用的发量
+– Tasks: 定义将要在进程主机上执行的任务列表
+– Handler: 定义task执行完成以后需要调用的任务
+
+
+例子:
+	安装 Apache 并修改监听端口为 8080
+	修改 ServerName 配置,执行 apachectl -t 命令不报错
+	设置默认主页 hello world
+	启动服务并设开机自启
+
+---
+- hosts: web
+  remote_user: root
+  tasks:
+    - yum: 'state="installed"  name="httpd"'
+    - replace: 'path=/etc/httpd/conf/httpd.conf regexp="#(ServerName).*" replace="\1 0.0.0.0"'
+    - copy: 'src=/var/myansible/index.html  dest="/var/www/html/"'
+    - service: 'state="started"  name="httpd" enabled="yes"'
+---------------------变量------------------------增加用户--------------
+
+---
+- hosts: cache
+  remote_user: root
+  vars:
+    username:
+      name: xxoo
+      pwd: abx		//写出数字会出错
+      group: games
+  tasks:
+    - name: add user and  change password
+      user:
+        name: "{{username.name}}"
+        password: "{{username.pwd | password_hash('sha512')}}"
+       # state: absent					//删除
+       # remove: yes					//删除
+        group: "{{username.group}}"
+    - shell: chage -d 0  "{{username.name}}"
+
+--------------------------------设密码------------
+– 解决密码明文问题
+– user模块的password为什么丌能设置密码呢
+– 经过测试发现,password是把字符串直接写入
+shadow,幵没有改发,而Linux的shadow密码是绉过
+加密的,所以不能使用
+• 解决方案
+– 发量过滤器password_hash
+{{ 'urpassword' | password_hash('sha512')}}
+
+------------------------------错诨处理方法----------------------
+
+– 关闭selinux,如果selinux已经关闭,返回1 ,若之前已经关闭则不算错误,可以忽略错误继续运行,忽略错误有两种方法
+– 第一种方式:
+shell: /usr/bin/somecommand || /bin/true                     //欺骗ansible,返回值为0
+– 第二种方式:
+- name: run some command
+  shell: /usr/bin/somecommand
+  ignore_errors: True
+
+----------------------函数--------ansible--
+---
+  - hosts: 192.168.1.16
+	 remote_user: root
+	 tasks:
+		- name: config httpd.conf
+		  copy: src=/root/playbook/httpd.conf
+		  dest=/etc/httpd/conf/httpd.conf
+		  notify:
+			 - restart httpd		//调用handlers的name
+	 handlers:						//重启函数
+		- name: restart httpd		//必须写
+		  service: name=httpd state=restarted
+
+
+--------------------------------when
+
+when
+
+有些时候需要在满足特定的条件后再触发某一项操作,或在特定的条件下织止某个行为,这个时候需要进行条件判断,when正是解决这个问题的最佳选择,进程中的系统发量facts作为when的条件,可以通过setup模块查看
+– when 的样例
+tashs:
+- name: somecommand
+command: somecommand
+when: expr
+---------------------------------------------register----
+存放状态值 　　加　　when
+
+# uptime  |  awk  '{printf ("%.2f"  $(NF-2))}'     //负载
+---
+  - hosts: web
+    remote_user: root
+    tasks:
+       - shell: uptime  |awk  '{printf("%.2f\n",$(NF-2))}'
+         register: result
+       - service:
+           name: httpd
+           state: stopped
+         when: result.stdout | float > 0.7    //stdout屏幕输出的值,不是0
+			debug: var=result                     //输出result所有的信息
+
+awk  'BEGIN {while(1){}}'      //死循环
+
+
+-----------------------------with_item
+
+---
+ - hosts: web2
+   remote_user: root
+   tasks:
+	 - user:
+	     name: "{{item.name}}"
+        group: "{{item.group}}"
+        password: "{{'123456'|password_hash('sha512')}}"
+	   with_items:
+		 - {name: "aa", group: "users"}
+		 - {name: "bb", group: "mail" }
+		 - {name: "cc", group: "wheel"}
+		 - {name: "dd", group: "root" }
+
+
+
+
+传参;
+ansible  -e   {'uname':{'name':'cc','pwd':'bb'}}   文件名     //还可以  -e   '@文件名yml的格式'
+
+{'uname':{'name':'cc','pwd':'bb'}}      //另写文件内容传参,json格式,空格可以不要
+---------扩展---------------login.defs-----------------密码使用sha512算法---------------------
+
+在  /etc/login.defs     系统添加用户的行为
+控制  用户uid/gid 的最大最小值,
+	printf  "%x" "100"   转为16进制
+	awk  {BEGIN while(1){}}   //死循环
+ 	
+	
+===========10.25==========四天 =====elk====================================================
+
+>  标准输出重定向
+<  标准输入
+
+>>  追加
+
+<<  
+
+0  标准输入(文件描述符)
+1  标准
+2  标准错误 
+
+cd   /proc/进程
+cd   fd
+
+exec  8<>/etc/passwd
+exec   8<&-   关闭文件描述符
+调用文件描述符  &数字
+
+echo  'nsd'  > /dev/tcp/192.168.1.11/dump             //重定向给别的机器发数据
+
+man   bash					//
+
+stdin   标准输入
+stdoput   标准输出
+stderr   标准错误
+
+
+  elk  解决方案
+
+ELK分别代表
+– Elasticsearch:  负责日志检索和储存(重要)
+– Logstash:  负责日志的收集和分析、处理
+– Kibana:  负责日志的可视化
+
+Elasticsearch部分(续3)
+		相关概念
+		Node: 装有一个ES服务器的节点
+		Cluster: 有多个Node组成的集群
+		Document: 一个可被搜索的基础信息单元
+		Index: 拥有相似特征的文档的集合
+		Type: 一个索引中可以定义一种戒多种类型
+		Filed: 是ES的最小单位,相当于数据的某一列
+		Shards: 索引的分片,每一个分片就是一个Shard
+		Replicas: 索引的拷贝
+
+
+--------------安装一台ES服务器
+192.168.1.11  es1
+192.168.1.12  es2
+192.168.1.13  es3
+192.168.1.14  es4
+192.168.1.15  es5
+
+192.168.1.16  kibana
+192.168.1.20  logstash(2G)
+
+
+安装java-1.8.0-openjdk
+yum -y install java-1.8.0-openjdk.x86_64
+ 
+安装 elasticsearch
+
+vim  /etc/elasticsearch/elasticsearch.yml 
+--修改配置文件
+17   cluster.name: mycluster
+23   node.name: es1
+54行   network.host: 本机ip或0.0.0.0
+68   discovery.zen.ping.unicast.hosts: ["es1", "es2", "es5"
+[root@es1 ~]# systemctl restart elasticsearch
+[root@es1 ~]# systemctl enable elasticsearch
+
+ss -antup | grep 9200
+访问 9200 端口查看是否安装成功,
+http://192.168.1.14:9200/_cluster/health?pretty    ---------查看健康状况
+	”status”: ”green“ 集群状态:绿色为正常、黄色表示有问题但丌是很严重、红色表示严重故障
+	”number_of_nodes”    : 5, 表示集群中节点的数量
+	
+------------------------curl-------------
+
+http 的请求方法:
+常用方法 GET,POST,HEAD
+其他方法 OPTIONS,PUT,DELETE,TRACE 和 CONNECT
+ES 常用:
+PUT				--增
+DELETE --删
+POST 	--改
+GET 	--查
+	curl 常用参数介绍:
+		-A 修改请求 agent
+		-X 设置请求方法
+		-i 显示返回头信息
+
+curl  -XPOST  http://网址
+
+-------------------elasticsearch插件(只装一台)
+
+kopf 管理工具
+#lftp 192.168.1.254   从ftp下载
+#cd /usr/share/elasticsearch/bin
+
+# ./plugin  install  ftp://192.168.1.254/pub/elasticsearch-head-master.zip
+# ./plugin  install  ftp://192.168.1.254/pub/elasticsearch-kopf-master.zip      //安装插件
+./plugin list    //列出插件
+
+# curl  -XGET  http://192.168.1.12:9200/_cat/nodes?v    //显示详细信息?v
+
+firefox浏览器     http://192.168.1.15:9200/_plugin/head/
+创建索引   5片   副本1   
+同样的数据1 2不会在同一台机器上
+创建-------------------------------
+[root@se5 bin]# curl -XPUT "http://192.168.1.65:9200/index" -d '    	//直接命令创建索引
+> {
+>"settings":{
+>"index":{
+>"number_of_shards":5,
+>"number_of_replicas":1
+>}
+> }
+> }'
+{"acknowledged":true}
+
+
+增--------------------------------
+
+curl -XPUT "http://192.168.1.15:9200/nsd1806/t/1" -d '{"姓名": "牛犇","年龄":"25","爱好":"逗比","阶段":"第一阶段"}'
+
+curl -XPUT "http://192.168.1.15:9200/nsd1806/t/2" -d '{"姓名": "老汤","年龄":"29","爱好":"xxoo","阶段":"第一阶段"}'
+
+curl -XPUT "http://192.168.1.15:9200/nsd1806/t/3" -d '{"姓名": "话题","年龄":"88","爱好":"装逼","阶段":"第3阶段"}'
+查----------------------------
+curl  -XGET  "http://192.168.1.15:9200/nsd1806/t/2"
+或者  curl  -XGET  "http://192.168.1.15:9200/nsd1806/t/2?pretty"   //竖着显示
+
+修改-----------------------
+curl  -XPOST  "http://192.168.1.15:9200/nsd1806/t/2/_update" -d '{"doc":{"年龄":18}}
+删除------------------------
+curl  -XDELETE   "http://192.168.1.15:9200/nsd1806/t/2"
+
+curl  -XDELETE   "http://192.168.1.15:9200/nsd1806/t/3" -d  '{"doc":{年龄}}'
+
+
+---------------------------------kibana
+ #yum -y install  kibana
+
+# vim /opt/kibana/config/kibana.yml
+2 server.port: 5601    //若把端口改为 80,可以成功启动 kibana,但 ss 时没有端口,没有监听 80 端口,服务里面写死了,
+不能用 80 端口,只能是 5601 这个端口
+5 server.host: "0.0.0.0"         //服务器监听地址
+15 elasticsearch.url: http://es1:9200         //声明地址,从哪里查,集群里面随便选一个
+23 kibana.index: ".kibana"             //kibana 自己创建的索引
+26 kibana.defaultAppId: "discover"    //打开 kibana 页面时,默认打开的页面 discover
+53 elasticsearch.pingTimeout: 1500        //ping 检测超时时间
+57 elasticsearch.requestTimeout: 30000              //请求超时
+64 elasticsearch.startupTimeout: 5000           //启劢超时
+
+测试
+# firefox 192.168.1.66:5601
+
+
+----------------------------------------------------------环境配置所需
+hostnamectl  set-hostname  es2
+/etc/sysconfig/network-scripts/ifcfg-eth
+systemctl restart  network
+
+#cut initrd
+DEVICE="eth0"
+ONBOOT="yes"
+NM_CONTROLLED="no"
+TYPE="Ethernet"
+BOOTPROTO="static"
+IPADDR="192.168.1.12"
+NETMASK="255.255.255.0"
+GATEWAY="192.168.1.254"
+
+LANG=C
+ growpart   /dev/vda 1
+xfs_growfs  /
+------------------------------------------------------------环境配置所需END
+
+
+===============10.26======kibana 可视化===============
+
+下载三个包
+accounts.json.gz  logs.jsonl.gz  shakespeare.json.gz
+  
+tar  cf  pwd.tar   /etc        //打包
+gzip    pwd.tar    //把tar压缩
+
+gzip   -d   解压
+
+批量导入数据  -------------------
+#curl  -XPOST   http://192.168.1.11:9200/_bulk  --data-binary   @shakespeare.json
+
+批量查询--------------------
+
+curl  -XGET   http://192.168.1.11:9200/_mget?pretty   -d  '
+{
+"docs":[
+	{
+	"_index":"logstash-2015.05.19",
+	"_type" : "log",
+	"_id":"AWauBC1kpOHw6AVKCq1Y"
+
+	},
+	{
+	"_index":"shakespeare",
+	"_type":"line",
+	"_id":"22"	
+	}
+]
+}'
+
+
+http://192.168.1.16:5601    进入图形
+--------周五------------------logstash------
+	是一个数据采集、加工处理以及传输的工具
+特点
+
+– 所有类型的数据集中处理
+– 不同模式和格式数据的正常化
+– 自定义日志格式的迅速扩展
+– 为自定义数据源轻松添加插件
+安装 java-1.8
+安装  logstash
+--------------
+cd /etc/logstash/     //里面的写法
+
+{ 数据源 } ==>
+	input { } ==>
+		filter { } ==>
+			output { } ==>
+				{ ES }
+
+
+Logstash里面的类型
+    布尔值类型: ssl_enable => true
+ 	字节类型:
+bytes => "1MiB"
+	– 字符串类型: name => "xkops"
+	– 数值类型: port => 22
+	– 数组: match => ["datetime","UNIX"]
+	– 哈希: options => {k => "v",k2 => "v2"}
+	– 编码解码: codec => "json"
+	– 路径: file_path => "/tmp/filename"
+	– 注释: #
+
+input{
+	stdin{
+		codec => "json"	
+	}
+}
+filter{}
+output{
+	stdout{
+		codec => "rubydebug"	
+	}
+}
+
+
+
+ cd /opt/logstash/bin/      //以下几个插件
+[root@logstash bin]# ls
+logstash      logstash.lib.sh  logstash-plugin.bat  plugin.bat  rspec.bat
+logstash.bat  logstash-plugin  plugin               rspec       setup.bat
+[root@logstash bin]# ./logstash-plugin  list     //查看插件
+logstash-input-zeromq
+logstash-output-csv
+logstash-output-elasticsearch
+logstash-filter-ruby
+logstash-codec-line
+
+以 '-' 分割,input   output    filter   都表示出来   codec   表示编码格式(任意一个区域,指定编码格式)
+
+
+# alias logstash=/opt/logstash/bin/logstash    //创建别名
+# logstash -f  logstash.conf
+Pipeline main started
+//此时输入任意值,将会复制显示输出,跟cat一样
+abcasdasd
+2018-10-26T06:25:21.035Z logstash abcasdasd
+
+https://github.com/logstash-plugins  --->logstash-output-elasticsearch--->local center    //查看文档
+
+--------------------------
+# logstash -f  logstash.conf
+Pipeline main started
+qwewqeqwe									//键盘输入
+{											//没有识别json 失败fail
+       "message" => "asd",
+          "tags" => [
+        [0] "_jsonparsefailure"
+    ],
+      "@version" => "1",
+    "@timestamp" => "2018-10-26T06:40:25.135Z",
+          "host" => "logstash"
+}
+
+
+{"a":1,"b":2}							
+{
+             "a" => 1,
+             "b" => 2,					//json格式
+      "@version" => "1",
+    "@timestamp" => "2018-10-26T06:41:53.753Z",
+          "host" => "logstash"
+}
+------------------------		file模块
+input{
+      file{
+      	  path => ["/tmp/a.log", "/var/tmp/b.log"]
+		  type => "weblog"
+		  sincedb_path =>  "/var/lib/logstash/since.db      //记忆文件路径   /dev/null
+		  start_position => "beginning"               //记忆从头开始读
+        }
+		file{
+		path =>  [....]
+		type  =>  "jsonlog"       //不同日志类型
+		}
+}
+
+#echo A_${RANDOM} >>  /tmp/a.log				//给文件里写入数据
+
+{
+       "message" => "A_13916",
+      "@version" => "1",
+    "@timestamp" => "2018-10-26T07:04:26.584Z",
+          "path" => "/tmp/a.log",
+          "host" => "logstash"
+}
+----------------根据日志类型
+记忆文件
+/root/.sincedb*  
+sincedb_path =>  "/var/lib/logstash/since.db"
+
+--------根据网络---------tcp
+
+	echo  "nsd1806" > /dev/tcp/192.168.1.20/8888			//根据tcp发送数据
+   echo  "nsd1806" > /dev/udp/192.168.1.20/8888			//udp
+    exec 6<>/dev/tcp/192.168.1.20/8888		//把后面的整体赋值给"6"
+     echo  "aa" > &6		
+     echo  "aa" >&6
+     echo  "bb" >&6
+    ss -atl
+    ss -ant
+    exec  6<&-				//取消"6"的重定向内容
+
+-----------syslog---本地写的日志,发送给远程  或  本机
+[root@apache ~]# vim /etc/rsyslog.conf 		//修改配置文件
+local0.info     @192.168.1.67:514    				//一个@代表 udp,两个@@代表 tcp
+[root@apache ~]# systemctl restart  rsyslog.service
+
+#logger -p local0.info -t nds "001 elk"			//测试,写日志
+
+[root@logstash logstash]# logstash  -f  logstash.conf 			//显示
+Settings: Default pipeline workers: 2
+Pipeline main started
+{
+           "message" => "elk\n",
+          "@version" => "1",
+        "@timestamp" => "2018-10-26T08:47:53.000Z",
+              "type" => "syslog",
+              "host" => "192.168.1.100",
+          "priority" => 134,
+         "timestamp" => "Oct 26 16:47:53",
+         "logsource" => "apache",
+           "program" => "nsd",
+          "severity" => 6,
+          "facility" => 16,
+    "facility_label" => "local0",
+    "severity_label" => "Informational"
+}
+
+
+
+--------------------------------web服务器
+[root@web ~]# yum -y install filebeat
+[root@web ~]# vim/etc/filebeat/filebeat.yml
+paths:
+- /var/log/httpd/access_log        //日志的路径,短横线加空格代表 yml 格式
+document_type: apachelog 			//文档类型
+elasticsearch:							//加上注释
+hosts: ["localhost:9200"]			//加上注释
+logstash:									//去掉注释
+hosts: ["192.168.1.20:5044"] 		//去掉注释,logstash 那台主机的 ip
+
+
+
+-------------------------filter -- grok  ---过滤
+
+httpd.apache.org   //http官方手册
+金步国 
+
+grok-patte     //正则表达式
+解析各种非结构化的日志数据插件
+grok 使用正则表达式把飞结构化的数据结构化
+在分组匹配,正则表达式需要根据具体数据结构编写
+在logstash服务器
+#vim /etc/logstash/logstash.conf
+	
+input{
+	stdin{ codec => "json" }
+	file {
+	   path => [ "/tmp/a.log", "/var/tmp/b.log" ]
+	   sincedb_path => "/var/lib/logstash/sincedb"
+      start_position => "beginning"
+	   type	=> "testlog"
+	}
+   	tcp {
+		host => "0.0.0.0"
+		port => "8888"
+		type => "tcplog"
+	}
+	udp {
+		host => "0.0.0.0"
+		port => "9999"
+		type => "udplog"
+	}
+	syslog {
+		port => "514"
+		type => "syslog"
+	}
+}
+	filter{
+		if [type] == "apachelog"{
+                grok{
+                match => ["message", "%{COMBINEDAPACHELOG}"]
+                }
+        }
+
+}
+output{
+		stdout{codec => "rubydebug"  }
+         if [type]  == "apachelog"{
+        elasticsearch{
+				 hosts => ["192.168.1.11:9200"]
+				index => "apachelog"
+				flush_size => 2000
+				idle_flush_time => 10
+
+        }
+        }
+
+}
+curl  http://192.168.1.100   访问该web服务器,产生日志文件,传给logstash服务器分析,然后再传给libana服务器作图
+
+
+http://192.168.1.16:5601
+
+
+
+
+ip  正则
+(?<![0-9])
+(?:(?:[0-1]?[0-9]{1,2}|2[0-4][0-9]|25[0-5])[.]
+	(?:[0-1]?[0-9]{1,2}|2[0-4][0-9]|25[0-5])[.]
+	(?:[0-1]?[0-9]{1,2}|2[0-4][0-9]|25[0-5])[.]
+	(?:[0-1]?[0-9]{1,2}|2[0-4][0-9]|25[0-5])
+)
+(?![0-9])
+
+netstat命令可以查看系统中启动的端口信息，该命令常用选项如下：
+-a显示所有端口的信息
+-n以数字格式显示端口号
+-t显示TCP连接的端口
+-u显示UDP连接的端口
+-l显示服务正在监听的端口信息，如httpd启动后，会一直监听80端口
+-p显示监听端口的服务名称是什么（也就是程序名称）
+
+
+========周一10.29==========hadoop=========================================
+
+	大数据指无法在一定时间范围内用常规软件工具进行捕捉、
+管理和处理的数据集合,需要新处理模式才能具有更强的
+决策力、洞察发现力和流程优化能力的海量、高增长率和
+多样化的信息资产
+	是指从各种各样类型的数据中,快速获得有价值的信息
+
+-------------大数据特性--------------
+大数据的5V特性是什么?
+	(V)olume (大体量)
+可从数百TB到数十数百PB、甚至EB的规模
+	(V)ariety(多样性)
+大数据包括各种格式和形态的数据
+	(V)elocity(时效性)
+很多大数据需要在一定的时间限度下得到及时处理
+	(V)eracity(准确性)
+处理的结果要保证一定的准确性
+	(V)alue(大价值)
+大数据包含很多深度的价值,大数据分析挖掘和利用将带来巨大
+的商业价值
+
+
+------------------------------------Hadoop是什么
+– Hadoop是一种分析和处理海量数据的软件平台
+– Hadoop是一款开源软件,使用JAVA开发
+– Hadoop可以提供一个分布式基础架构
+------------------------------------Hadoop特点
+– 高可靠性、高扩展性、高效性、高容错性、低成本
+
+------------------------------------Hadoop常用组件
+	HDFS:Hadoop分布式文件系统(核心组件)
+	MapReduce:分布式计算框架(核心组件)
+	Yarn:集群资源管理系统(核心组件)
+	Zookeeper:分布式协作服务
+	Hbase:分布式列存数据库
+	Hive:基于Hadoop的数据仓库
+	Sqoop:数据同步工具
+	Pig:基于Hadoop的数据流系统
+	Mahout:数据挖掘算法库
+	Flume:日志收集工具
+
+----------------------------------------HDFS角色及概念
+• Hadoop体系中数据存储管理的基础,是一个高度容
+错的系统,用于在低成本的通用硬件上运行
+• 角色和概念
+– Client
+– Namenode
+– Secondarynode
+– Datanode
+
+
+NameNode头脑
+fsimgs   记录数据的位置  
+
+fsedits	修改记录
+
+secondary  NameNode    //NameNode的秘书
+
+
+-------------------------------------HDFS角色及概念(续1)
+• NameNode
+	– Master节点,管理HDFS的名称空间和数据块映射信息,配置副本策略,处理所有客户端请求
+• Secondary NameNode
+	– 定期合幵fsimage 和fsedits,推送给NameNode
+	– 紧急情况下,可辅助恢复NameNode
+• 但Secondary NameNode幵非NameNode的热备
+DataNode
+– 数据存储节点,存储实际的数据
+– 汇报存储信息给NameNode
+• Client
+– 切分文件
+– 访问HDFS
+– 不NameNode交互,获取文件位置信息
+– 不DataNode交互,读取和写入数据
+
+每个块128M
+
+两台linux利用heartbeat+drbd 完美实现双机热备-------------------nfs   高可用
+
+
+6台虚拟机
+2G内存
+16G硬盘
+2cup
+-----------------------------------单机安装hadoop
+
+yum -y install  java-1.8.0-openjdk
+yum -y install  java-1.8.0-openjdk-devel.x86
+
+解压  hadoop
+unzip  /Hadoop.zip   				//总包
+tar  -xf hadoop-2.7.6.tar.gz    //hadoop包
+  mv  hadoop-2.7.6   /usr/local/hadoop     	//移动
+
+rpm  -ql  java-1.8.0-openjdk      //需要用到java的jre路径
+需要hadoop的运行路径    /usr/local/hadoop/etc/hadoop
+
+修改配置文件    /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+25 JAVA_HOME=usr/lib/jvm/java-1.8.0-openjdk-1.8.0.131-11.b12.el7.x86_64/jre		//java环境变量
+33 hadoop_conf_home=/usr/local/hadoop/etc/hadoop 											//hadoop环境变量
+--------------------测试
+创建文件夹  mkdir  input
+随便导入txt文件   cp   *.txt   input
+//运行这条命令,数据分析单词个数,output接受的文件夹.
+#./bin/hadoop jar ./share/hadoop/mapreduce/hadoop-mapreduce-examples-2.7.3.jar wordcount input output
+   
+--------------------------
+hadoop-env.sh
+core-site.xml
+hdfs-site.xml	HDFS配置文件
+mapred-site.xml
+yarn-site.xml
+slaves
+-----------------------------xml格式
+<property>
+<name>关键字</name>
+<value>变量值</value>
+<description> 描述 </description>
+</property>
+---------------------------------------------------hdfs
+创建nn01服务器一台
+三台node1  node2  node3
+修改hosts文件   ,互相ping通
+
+nn01生成ssh秘钥 且发给node[1 2 3]
+# ssh-keygen -b 2048 -t rsa -N '' -f id_rea
+# ssh-copy-id -i ./key.pub root@ip.xx.xx.xx
+
+并且无yes,  /etc/ssh/ssh_conf的35行改为no 
+每台安装hadoop,
+
+-------------------核心文件--------------------core-site.xml
+http://hadoop.apache.org/  网址
+核心配置文件   :  core-site.xml
+old  site  老版本----->  (左下角)最后xml  ----->  2.7.6  ---->点击
+name不能改, value可以改
+<configuration>
+        <property>
+                <name>fs.defaultFS</name>
+                <value>hdfs://nn01:9000</value>
+                <description>file system</description>
+        </property>
+        <property>
+                <name>hadoop.tmp.dir</name>
+                <value>/var/hadoop</value>
+                <description>all data  dir</description>
+        </property>
+</configuration>
+
+---------------------------HDFS配置文件---------------------------------hdfs-site.xml
+<configuration>
+	<property>
+                <name>dfs.namenode.https-address</name>				//nn01配置namenode
+                <value>nn01:50070</value>						//查看官方文档的端口
+                <description>namenode host</description>
+   </property>
+	<property>
+                <name>dfs.namenode.secondary.http-address</name>		//nn01配置secondary
+                <value>nn01:50090</value>						//查看官方文档的端口
+                <description>decondary host</description>
+	</property>
+	<property>
+                <name>dfs.replication</name>					//复制几分数据 这里2份
+                <value>2</value>
+                <description>data  2 num replication</description>
+	</property>
+</configuration>
+
+-----------------datanode的主机在哪-----------------slave
+一行写一个主机名 
+node1
+node2
+node3
+
+rsync  -aSH  --delete  /usr/local/hadoop/  node2:/usr/local/hadoop/  -e  'ssh'   //同步
+--------------------------格式化
+mkdir   /var/hadoop
+#cd   /usr/local/hadoop/
+#./bin/hdfs  namenode -format
+------------------------------启动
+cd /usr/local/hadoop/
+#./sbin/start-dfs.sh		//启动
+#./sbin/stop-dfs.sh		//关闭
+
+如果最后错误:  则在其他nodedata删除/var/hadoop/*
+节点验证
+– NameNode上
+[root@nn01 hadoop]# bin/hdfs dfsadmin -report		//验证hdfs
+
+------------------------------同步脚本---------
+rsync
+	-v, --verbose详细模式输出。
+
+	-a, --archive归档模式，表示以递归方式传输文件，并保持所有文件属性不变。
+
+	-l  保留软链接
+
+	-R  保留相对路径
+
+	-H  保留硬链接
+
+	-p，-o，-g，-A  分别保留权限,属主，属组，acl等，但如果加了-a，这些就都包括了
+
+	-z, --compress对备份的文件在传输时进行压缩处理。
+
+	-D    等于--devices  --specials    表示支持b,c,s,p类型的文件
+
+	--delete：删除那些DST中存在而在SRC中没有的文件。
+
+inotify   
+	-m	表示始终保持事件监听状态。
+	-r	表示递归查询目录。
+	-q	表示打印出监控事件。
+	-e	通过此参数可以指定要监控的事件。可监听的事件，如下：
+
+
+========周二================mapred================yarn===================
+分布式计算框架mapred-site.xml
+资源管理  yarn-site.xm
+
+在nn01上配置,都需要配置
+[root@nn01 hadoop]# cp  mapred-site.xml.template   mapred-site.xml      //改名
+[root@nn01 hadoop]# vim  mapred-site.xml			//修改mapred
+<configuration>
+<property>
+        <name>mapreduce.framework.name</name>		//资源管理类
+        <value>yarn</value>
+</property>
+</configuration>
+
+[root@nn01 hadoop]# vim  yarn-site.xml		//修改yarn
+//找nn01,
+<configuration>
+<property>
+<name>yarn.resourcemanager.hostname</name>			
+<value>nn01</value>
+</property>
+<property>
+<name>yarn.nodemanager.aux-services</name>
+<value>mapreduce_shuffle</value>
+</property>
+</configuration>
+-----------------------------启动./sbin/start-yarn
+/sbin/start-yarn
+./bin/yarn  node  --list			//有节点表示成功(这里三个)
+./sbin/start-all.sh    //先启动hdfs,再启动yarn
+
+
+使用Web访问Hadoop
+- namenode web页面(nn01)
+	# http://192.168.1.21:50070/
+- secondory namenode web 页面(nn01)
+	# http://192.168.1.21:50090/
+- datanode web 页面(node1,node2,node3)
+	# http://192.168.1.22:50075/
+- resourcemanager web页面(nn01)
+	# http://192.168.1.21:8088/
+- nodemanager web页面(node1,node2,node3)
+	# http://192.168.1.22:8042/
+
+
+ ./bin/hadoop  fs   -ls /			//hadoop的根
+ ./bin/hadoop  fs   -mkdir  /abc		//创建文件夹abc
+ ./bin/hadoop  fs   -touchz   /a.txt		//创建文件
+ ./bin/hadoop  fs   -put  *.txt   /abc	//上传文件
+[root@nn01 fs]# /usr/local/hadoop/bin/hadoop  fs -get  /abc/passwd 		//下载文件到当前目录
+[root@nn01 fs]# ls
+passwd
+
+//数据分析
+# ./bin/hadoop jar ./share/hadoop/mapreduce/hadoop-mapreduce-examples-2.7.6.jar   wordcount  /abc  /out	
+# ./bin/hadoop  jar ./share/hadoop/mapreduce/hadoop-mapreduce-examples-2.7.6.jar wordcount hdfs://nn01:9000/abc   hdfs://nn01:9000/output
+
+
+------------------------------增加hdfs节点------------node4
+HDFS增加结点
+– 启劢一个新的系统,禁用Selinux、禁用firewalld
+– 设置SSH免密码登录
+– 在所有节点修改/etc/hosts,增加新节点的主机信息
+– 安装java运行环境(java-1.8.0-openjdk-devel)
+– 拷贝NamNode的/usr/local/hadoop到本机
+– 修改NameNode的slaves文件增加该节点
+– 在该节点启劢DataNode
+
+添加hosts
+在nn01的slave添加  node4节点
+安装java-1.8.0-openjdk  和 java-1.8.0-openjdk-devel
+同步nn01的/usr/localhadoop   到 node4
+rsync  -az  --delete  /usr/local/hadoop/    root@192.168.1.14:/usr/local/hadoop/     
+
+nn01# ssh-copy-id 192.168.1.14     //ssh免秘登录
+
+node4# ./sbin/hadoop-daemon.sh  start  datanode		//在node4启动数据节点
+
+[root@node4 hadoop]# jps  		//jps查看
+1589 DataNode
+1663 Jps
+
+# ./bin/hdfs dfsadmin -setBalancerBandwidth 67108864     //设置同步带宽,
+Balancer bandwidth is set to 67108864
+# ./sbin/start-balancer.sh		//并同步数据
+
+# ./bin/hdfs dfsadmin -report     // 查看集群状态
+
+-------------------------------------------HDFS节点修复
+– 修复节点比较简单,不增加节点基本一致
+注意:新节点的ip和主机名要不损坏节点的一致
+– 启动服务(跟增加节点相同,在当前节点操作)
+# ./sbin/hadoop-daemon.sh start datanode
+
+
+
+-----------------------------------------------------删除hdfs节点
+//去掉之前添加在slaves的 node4
+node1
+node2
+node3
+
+<property>
+	<name>dfs.hosts.exclude</name>
+	<value>/usr/local/hadoop/etc/hadoop/exclude</value>
+</property>
+#vim   /usr/local/hadoop/etc/hadoop/exclude		//创建文件exclude,并添加删除节点名,不是主机名
+node4
+
+将修改文件同步到不删除的节点
+然后修复节点
+./bin/hdfs dfsadmin -refreshNodes
+./bin/hdfs  dfsadmin -report
+
+Normal:正常状态
+Decommissioned in Program:数据正在迁移
+Decommissioned:数据迁移完成
+数据如果大,则需要很长的时间
+
+----------------集群资源管---------------yarn节点
+
+跟hdfs节点不同,将yarn节点没有数据,操作简单
+
+# sbin/yarn-daemon.sh start nodemanager		//增加节点
+
+# sbin/yarn-daemon.sh stop nodemanager		//删除节点
+
+# ./bin/yarn node -list			//查看节点 (ResourceManager)
+
+
+-----------------------------------nfs网关
+
+2台
+2cpu   2G   8G硬盘
+1 NFSGW  192.168.1.15
+安装java-1.8.0-openjdk
+java-1.8.0-openjdk-devel
+卸载  rpcbind  nfs-utils
+2 clent 192.168.1.20
+安装nfs-utils
+
+更改主机名,配置 /etc/hosts  (/etc/hosts 在 nn01 和 nfsgw 上面配置)
+
+[root@nn01 hadoop]# vim /etc/hosts
+192.168.1.10  nn01
+192.168.1.11 node1
+192.168.1.12 node2
+192.168.1.13 node3
+192.168.1.14 node4
+192.168.1.15 nfsgw
+192.168.1.20 client
+
+[root@nn01 hadoop]# ./sbin/stop-all.sh 			//停止hadoop集群
+
+[root@nn01 hadoop]# vim  etc/hadoop/core-site.xml
+.....
+
+<property>
+                <name>hadoop.proxyuser.tedu.groups</name>		//添加
+                <value>*</value>
+        </property>
+        <property>
+                <name>hadoop.proxyuser.tedu.hosts</name>
+                <value>*</value>
+        </property>
+
+同步所有主机
+启动dfs   ./sbin/start-dfs.sh       //启动dfs
+验证   ./bin/hdfs dfsadmin  -report
+
+
+----------------------------------
+把hadoop目录同步到nfsgw主机的/usr/local/下
+rsync   -az  /usr/local/hadoop/    nfsgw:/usr/local/hadoop/		//同步到nfsgw主机
+创建数据根目录 /var/hadoop(在 NFSGW 主机上面操作)
+[root@nfsgw ~]# mkdir /var/hadoop
+创建转储目录,并给用户 nfs 赋权
+[root@nfsgw ~]# mkdir /var/nfstmp
+[root@nfsgw ~]# chown nfs:nfs /var/nfstmp
+给/usr/local/hadoop/logs 赋权(在 NFSGW 主机上面操作)
+[root@nfsgw ~]# setfacl -m u:nfs:rwx /usr/local/hadoop/logs
+<启动>
+启动   portmap	//root启动  !!!
+再启动     nfs	//nfs启动   !!!
+nfs启动时报错要写日志,而写不进去/usr/local/hadoop/logs
+
+<关闭>
+stop   nfs 
+stop  portmap
+
+[root@nfsgw hadoop]# ./sbin/hadoop-daemon.sh   --script  ./bin/hdfs  start   portmap	//拿root启动portmap
+[root@nfsgw hadoop]# jps
+1978 Jps
+1931 Portmap
+[root@nfsgw hadoop]# su - tedu
+[tedu@nfsgw hadoop]$ ./sbin/hadoop-daemon.sh  --script  ./bin/hdfs   start  nfs3		//拿nfs启动nfs3
+starting nfs3, logging to /usr/local/hadoop/logs/hadoop-tedu-nfs3-nfsgw.out
+[tedu@nfsgw hadoop]$ jps
+2035 Nfs3
+2088 Jps
+
+[root@nfsgw hadoop]# jps			//最后拿root用jps , 有三个
+2035 Nfs3
+2100 Jps
+1931 Portmap
+
+目前NFS只能使用v3版本
+vers=3
+– 仅使用TCP作为传输协议
+proto=tcp
+– 丌支持NLM
+nolock
+– 禁用access time的时间更新
+noatime
+
+
+
+[root@client ~]# mount  -t  nfs  -o  vers=3,proto=tcp,nolock,noatime,sync,noacl 192.168.1.15:/  /mnt/
+[root@client ~]# df  -h
+文件系统        容量  已用  可用 已用% 挂载点
+/dev/vda1        10G  1.1G  9.0G   11% /
+devtmpfs        967M     0  967M    0% /dev
+tmpfs           977M     0  977M    0% /dev/shm
+tmpfs           977M   17M  960M    2% /run
+tmpfs           977M     0  977M    0% /sys/fs/cgroup
+tmpfs           196M     0  196M    0% /run/user/0
+192.168.1.15:/   62G   14G   49G   22% /mnt				//挂载点
+
+[root@client ~]# rpcinfo -p 192.168.1.15
+   program vers proto   port  service
+    100005    3   udp   4242  mountd
+    100005    1   tcp   4242  mountd
+    100000    2   udp    111  portmapper
+    100000    2   tcp    111  portmapper
+    100005    3   tcp   4242  mountd
+    100005    2   tcp   4242  mountd
+    100003    3   tcp   2049  nfs
+    100005    2   udp   4242  mountd
+    100005    1   udp   4242  mountd
+
+
+======================周三=====================zookeeper====集群一致====================
+zookeeper能干什么: 保持数据在集群间的事务一致性
+leader  跟master一样,
+flower  跟 slave
+okeeper应用场景
+– 集群分布式锁
+– 集群统一命名服务
+– 分布式协调服务
+
+Zookeeper角色与特性
+
+leader:接受所有Follower的提案请求并统一协调发起
+提案的投票,负责不所有的Follower迚行内部数据交换
+– Follower:直接为客户端服务并参不提案的投票,同时
+不Leader迚行数据交换
+– Observer:直接为客户端服务但并丌参不提案的投票,
+同时也不Leader迚行数据交换
+
+角色与选举
+• Zookeeper角色不选丼
+– 服务在启动的时候是没有角色的(LOOKING)
+– 角色是通过选丼产生的
+– 选丼产生一个Leader,剩下的是Follower
+• 选丼Leader原则
+– 集群中超过半数机器投票选择Leader
+– 假如集群中拥有n台服务器,那么Leader必须得到n/2+1台服务器的投票
+
+
+ookeeper角色不选丼
+– 如果Leader死亡,重新选丼Leader
+– 如果死亡的机器数量达到一半,则集群挂掉
+– 如果无法得到足够的投票数量,就重新发起投票,如果参不投票的机器不足n/2+1,则集群停止工作
+– 如果Follower死亡过多,剩余机器不足n/2+1,则集群也会停止工作
+– Observer不计算在投票总设备数量里面
+-----------------------------安装zookeeper
+1 安装 java-1.8.0-openjdk-devel,
+zookeeper 解压拷贝到 /usr/local/zookeeper
+2 配置文件改名，并在最后添加配置
+	root@nn01 conf]# mv zoo_sample.cfg  zoo.cfg
+	[root@nn01 conf]# chown root.root zoo.cfg
+	[root@nn01 conf]# vim zoo.cfg
+		server.1=node1:2888:3888
+		server.2=node2:2888:3888
+		server.3=node3:2888:3888
+		server.4=nn01:2888:3888:observer
+3 拷贝 /usr/local/zookeeper 到其他集群主机
+4 创建 mkdir /tmp/zookeeper，每一台都要
+5 创建 myid 文件，id 必须与配置文件里主机名对应的 server.(id) 一致
+	[root@nn01 conf]# echo 4 >/tmp/zookeeper/myid
+	[root@nn01 conf]# ssh node1 'echo 1 >/tmp/zookeeper/myid'
+	[root@nn01 conf]# ssh node2 'echo 2 >/tmp/zookeeper/myid'
+	[root@nn01 conf]# ssh node3 'echo 3 >/tmp/zookeeper/myid'
+6 启动服务，单启动一台无法查看状态，需要启动全部集群以后才能查看状态，每一台上面都要手工启动（以nn01为例子）
+	[root@nn01 conf]# /usr/local/zookeeper/bin/zkServer.sh start
+注意：刚启动zookeeper查看状态的时候报错，启动的数量要保证半数以上，这时再去看就成功了
+
+zookeeper.apache.org
+nc  192.168.1.11  2181
+exec 7<>/dev/tcp/192.168.1.11/2181
+echo  'ruok'  > &7
+read -n 4 AA  < &7
+echo  $AA
+
+查看zookeeper的状态脚本
+#!/bin/bash
+function  get(){
+	exec 2> /dev/null
+	exec 8<>
+}
+
+-----------------kafka,实时聊天通信
+Kafka在node1，node2，node3上面操作即可
+把 kafka 拷贝到 /usr/local/kafka 下面
+[root@node1 ~]# mv kafka_2.10-0.10.2.1 /usr/local/kafka
+修改配置文件 /usr/local/kafka/config/server.properties
+[root@node1 config]# vim server.properties
+broker.id=22
+zookeeper.connect=node1:2181,node2:2181,node3:2181
+拷贝 kafka 到其他主机，并修改 broker.id ,不能重复
+[root@node2 ~]# vim /usr/local/kafka/config/server.properties        
+//node2主机修改
+broker.id=23
+[root@node3 ~]# vim /usr/local/kafka/config/server.properties        
+//node3主机修改
+broker.id=24
+启动 kafka 集群（node1，node2，node3启动）
+[root@node1 local]# /usr/local/kafka/bin/kafka-server-start.sh -daemon /usr/local/kafka/config/server.properties 
+
+在node1创建标题aa
+[root@node1 local]# /usr/local/kafka/bin/kafka-topics.sh --create --partitions 1 --replication-factor 1 --zookeeper node3:2181 --topic aa    
+Created topic "aa".
+
+拟生产者，发布消息
+[root@node2 ~]# /usr/local/kafka/bin/kafka-console-producer.sh \
+--broker-list node3:9092 --topic aa        //写一个数据
+ccc
+ddd
+
+模拟消费者，接收消息
+[root@node3 ~]# /usr/local/kafka/bin/kafka-console-consumer.sh \ 
+--bootstrap-server node1:9092 --topic aa        //这边会直接同步
+ccc
+ddd
+注意：kafka比较吃内存，做完这个kafka的实验可以把它停了
+
+------------------------------下午,hadoop高可用------------------------------------------------
+
+namenode坏了 所有数据丢失
+官方提供了两种解决方案
+– HDFS with NFS
+– HDFS with QJM
+
+1. 停止所有服务  hadoop   zookeeper   kafka 
+./sbin/stop-all.sh
+reboot   重启
+2 准备一台新的nn02  是namenode
+ 
+3. 删除所有var/hadoop下的所有数据
+for  i in {11,12,13,20,14,15}; do  ssh 192.168.1.$i "rm -rf  /var/hadoop/*"; done
+4 ssh 免密登录(nn02)
+
+5 /etc/hosos , 加入nn02
+for  i in {11,12,13,20,14,15}; do rsync  -aSH  /etc/hosts     192.168.1.$i:/etc/hosts  -e  'ssh'; done
+
+把 nn01 的hadoop所有文件 拷贝到nn02
+
+-----------------------在nn01上修改core-site.xml  
+<property>
+                <name>fs.defaultFS</name>
+                <value>hdfs://nsd1806</value>		//nsd1806是随便起的名。相当于一个组，访问的时候访问这个组
+                <description>file system</description>
+</property>
+
+<property>
+                <name>fha.zookeeper.quorum</name>				//添加zookeeper地址
+                <value>node1:2181,node2:2181,node3:2181</value>
+                
+        </property>
+
+------------------在nn01修改hdfs-site.xml
+[root@nn01 ~]# vim /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+<configuration>
+    <property>
+        <name>dfs.replication</name>
+        <value>2</value>
+    </property>
+    <property>
+        <name>dfs.nameservices</name>
+        <value>nsd1806</value>
+    </property>
+    <property>
+        <name>dfs.ha.namenodes.nsd1806</name>                
+//nn1,nn2名称固定，是内置的变量，nsd1806里面有nn1，nn2
+        <value>nn1,nn2</value>
+    </property>
+    <property>
+        <name>dfs.namenode.rpc-address.nsd1806.nn1</name>        
+//声明nn1 8020为通讯端口，是nn01的rpc通讯端口
+        <value>nn01:8020</value>
+    </property>
+    <property>
+        <name>dfs.namenode.rpc-address.nsd1806.nn2</name>        
+//声明nn2是谁，nn02的rpc通讯端口
+        <value>nn02:8020</value>
+    </property>
+    <property>
+        <name>dfs.namenode.http-address.nsd1806.nn1</name>    
+//nn01的http通讯端口
+        <value>nn01:50070</value>
+    </property>
+    <property>
+        <name>dfs.namenode.http-address.nsd1806.nn2</name>     
+//nn01和nn02的http通讯端口
+        <value>nn02:50070</value>
+    </property>
+    <property>
+        <name>dfs.namenode.shared.edits.dir</name>        
+//指定namenode元数据存储在journalnode中的路径
+        <value>qjournal://node1:8485;node2:8485;node3:8485/nsd1806</value>
+    </property>
+    <property>
+        <name>dfs.journalnode.edits.dir</name>            
+//指定journalnode日志文件存储的路径
+        <value>/var/hadoop/journal</value>
+    </property>
+    <property>
+        <name>dfs.client.failover.proxy.provider.nsd1806</name>    
+//指定HDFS客户端连接active namenode的java类
+        <value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+    </property>
+    <property>
+        <name>dfs.ha.fencing.methods</name>                    //配置隔离机制为ssh
+        <value>sshfence</value>
+    </property>
+    <property>
+        <name>dfs.ha.fencing.ssh.private-key-files</name>    //指定密钥的位置
+        <value>/root/.ssh/id_rsa</value>
+    </property>
+    <property>
+        <name>dfs.ha.automatic-failover.enabled</name>        //开启自动故障转移
+        <value>true</value>                
+    </property>
+</configuration>
+
+------------------在nn01修改yarn-site.xml
+<configuration>
+    <property>
+        <name>yarn.nodemanager.aux-services</name>
+        <value>mapreduce_shuffle</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.ha.enabled</name>
+        <value>true</value>
+    </property> 
+    <property>
+        <name>yarn.resourcemanager.ha.rm-ids</name>        //rm1,rm2代表nn01和nn02
+        <value>rm1,rm2</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.recovery.enabled</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.store.class</name>
+        <value>org.apache.hadoop.yarn.server.resourcemanager.recovery.ZKRMStateStore</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.zk-address</name>
+        <value>node1:2181,node2:2181,node3:2181</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.cluster-id</name>
+        <value>yarn-ha</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.hostname.rm1</name>
+        <value>nn01</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.hostname.rm2</name>
+        <value>nn02</value>
+    </property>
+
+</configuration>
+
+同步到所有主机
+所有nodeX  : 启动zookeeper
+初始化ZK集群
+NN01:  /usr/local/hadoop/bin/hdfs zkfc -formatZK
+Successfully created /hadoop-ha/nsd1806 in ZK			//表示成功
+在node1，node2，node3上面启动journalnode服务
+启动: /usr/local/hadoop/sbin/hadoop-daemon.sh   start   journalnode
+
+格式化，先在node1，node2，node3上面启动journalnode才能格式化
+nn01# /usr/local/hadoop//bin/hdfs  namenode  -format 
+
+nn01数据同步到nn02 /var/hadoop/dfs
+nn01# rsync  -aSH  /var/hadoop/   nn02:/var/hadoop/
+
+初始化 JNS
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs namenode -initializeSharedEdits
+
+停止 journalnode 服务（node1，node2，node3）
+[root@node1 hadoop]# /usr/local/hadoop/sbin/hadoop-daemon.sh stop journalnode
+[root@node1 hadoop]# jps
+29346 Jps
+26895 QuorumPeerMain
+
+步骤二：启动集群
+
+nn01上面操作
+# /usr/local/hadoop/sbin/start-all.sh  //启动所有集群
+	This script is Deprecated. Instead use start-dfs.sh and start-yarn.sh
+	Starting namenodes on [nn01 nn02]
+	nn01: starting namenode, logging to /usr/local/hadoop/logs/hadoop-root-namenode-nn01.out
+	nn02: starting namenode, logging to /usr/local/hadoop/logs/hadoop-root-namenode-nn02.out
+	node1: starting datanode, logging to /usr/local/hadoop/logs/hadoop-root-datanode-node1.out
+	node2: starting datanode, logging to /usr/local/hadoop/logs/hadoop-root-datanode-node2.out
+	node3: starting datanode, logging to /usr/local/hadoop/logs/hadoop-root-datanode-node3.out
+	Starting journal nodes [node1 node2 node3]
+	node3: starting journalnode, logging to /usr/local/hadoop/logs/hadoop-root-journalnode-node3.out
+	node1: starting journalnode, logging to /usr/local/hadoop/logs/hadoop-root-journalnode-node1.out
+	node2: starting journalnode, logging to /usr/local/hadoop/logs/hadoop-root-journalnode-node2.out
+	Starting ZK Failover Controllers on NN hosts [nn01 nn02]
+	nn01: starting zkfc, logging to /usr/local/hadoop/logs/hadoop-root-zkfc-nn01.out
+	nn02: starting zkfc, logging to /usr/local/hadoop/logs/hadoop-root-zkfc-nn02.out
+	starting yarn daemons
+	starting resourcemanager, logging to /usr/local/hadoop/logs/yarn-root-resourcemanager-nn01.out
+	node3: starting nodemanager, logging to /usr/local/hadoop/logs/yarn-root-nodemanager-node3.out
+	node1: starting nodemanager, logging to /usr/local/hadoop/logs/yarn-root-nodemanager-node1.out
+	node2: starting nodemanager, logging to /usr/local/hadoop/logs/yarn-root-nodemanager-node2.out
+
+nn02上面操作
+[root@nn02 hadoop]# /usr/local/hadoop/sbin/yarn-daemon.sh start resourcemanager
+starting resourcemanager, logging to /usr/local/hadoop/logs/yarn-root-resourcemanager-nn02.out
+
+查看集群状态
+	[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs haadmin -getServiceState nn1
+	active
+	[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs haadmin -getServiceState nn2
+	standby
+	[root@nn01 hadoop]# /usr/local/hadoop/bin/yarn rmadmin -getServiceState rm1
+	active
+	[root@nn01 hadoop]# /usr/local/hadoop/bin/yarn rmadmin -getServiceState rm2
+	standby
+
+查看节点是否加入
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs dfsadmin -report
+...
+Live datanodes (3):    //会有三个节点
+...
+[root@nn01 hadoop]# /usr/local/hadoop/bin/yarn  node  -list
+Total Nodes:3
+         Node-Id         Node-State    Node-Http-Address    Number-of-Running-Containers
+     node2:43307            RUNNING           node2:8042                               0
+     node1:34606            RUNNING           node1:8042                               0
+     node3:36749            RUNNING           node3:8042                               0
+
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hadoop  fs -mkdir /aa //创建aa
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hadoop  fs -put *.txt /aa
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hadoop  fs -ls hdfs://nsd1806/aa  
+//也可以这样查看
+
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs haadmin -getServiceState nn1
+active
+[root@nn01 hadoop]# /usr/local/hadoop/sbin/hadoop-daemon.sh stop namenode
+stopping namenode
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs haadmin -getServiceState nn1      
+//再次查看会报错
+[root@nn01 hadoop]# /usr/local/hadoop/bin/hdfs haadmin -getServiceState nn2  
+//nn02由之前的standby变为active
+active
+[root@nn01 hadoop]# /usr/local/hadoop/bin/yarn rmadmin -getServiceState rm1
+active
+[root@nn01 hadoop]# /usr/local/hadoop/sbin/yarn-daemon.sh stop resourcemanager  
+//停止resourcemanage
+[root@nn01 hadoop]# /usr/local/hadoop/bin/yarn rmadmin -getServiceState rm2
+active
+
+
+
+
+
+
+
+
